@@ -37,11 +37,35 @@ import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+
+# How long to wait for a single socket read while downloading a .lgx
+# before giving up. urllib.request.urlopen's `timeout=` applies per
+# read(), so a stalled transfer mid-download is caught as well as
+# unreachable hosts. 60s is generous enough for big packages over
+# slow links but short enough that a dead URL doesn't hang the
+# script forever.
+DOWNLOAD_TIMEOUT_SECONDS = 60
+
+
+class FetchError(Exception):
+    """Raised by the download / verify / extract helpers on any
+    package-level failure (download error, lgx verify failure,
+    unparseable manifest, …). Wrapping these in an exception lets
+    `cmd_build` / `cmd_add` translate to `die()` (single bad package
+    aborts the run — the locked policy), while `validate --full`
+    converts each one into a per-entry issue so the report covers the
+    whole batch rather than stopping at the first miss.
+
+    Previously these were direct `die()` calls and validate caught the
+    resulting SystemExit only to immediately re-raise it — a bug PR
+    review surfaced."""
 
 SCHEMA_VERSION = 2
 # Manifest fields the downloader cross-checks index ↔ file on
@@ -195,13 +219,39 @@ def read_url_list(path: pathlib.Path) -> list[str]:
 def download(url: str, dest: pathlib.Path) -> str | None:
     """Fetch a URL into `dest`, returning the response's Last-Modified
     header verbatim (or None when the server didn't send one). We don't
-    parse it here — caller decides how to convert / fall back."""
+    parse it here — caller decides how to convert / fall back.
+
+    Network/HTTP failures are turned into `FetchError` with a one-line
+    message; the timeout applies per socket read so a stalled
+    connection or unreachable host fails out in bounded time instead
+    of hanging forever. Without this guard a transient failure
+    surfaced as a raw Python traceback to the operator, which review
+    correctly called out as unhelpful from a terminal."""
     info(f"downloading {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "logos-index.py/1"})
-    with urllib.request.urlopen(req) as resp:
-        last_modified = resp.headers.get("Last-Modified")
-        with dest.open("wb") as f:
-            shutil.copyfileobj(resp, f)
+    try:
+        with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_SECONDS) as resp:
+            last_modified = resp.headers.get("Last-Modified")
+            with dest.open("wb") as f:
+                shutil.copyfileobj(resp, f)
+    except urllib.error.HTTPError as exc:
+        # Server responded with an error status (404, 403, 500, …).
+        raise FetchError(f"download failed for {url}: HTTP {exc.code} {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        # Connection-level failure: DNS, refused, unreachable, TLS, …
+        # `exc.reason` carries the underlying OSError / message.
+        raise FetchError(f"download failed for {url}: {exc.reason}") from exc
+    except socket.timeout as exc:
+        # Stalled mid-transfer — urllib raises socket.timeout for
+        # per-read deadlines on Python ≥ 3.10.
+        raise FetchError(
+            f"download timed out for {url} "
+            f"(no data within {DOWNLOAD_TIMEOUT_SECONDS}s)"
+        ) from exc
+    except OSError as exc:
+        # Catch-all for anything urllib lets through (e.g. disk full
+        # mid-write). Keep the message single-line for terminal output.
+        raise FetchError(f"download failed for {url}: {exc}") from exc
     return last_modified
 
 
@@ -211,8 +261,9 @@ def version_entry_from_lgx(
     """Turn a downloaded .lgx into (package_name, version_entry).
 
     Pipeline:
-      1. `lgx verify` — abort the whole run on failure (locked policy:
-         a single bad package fails the index build).
+      1. `lgx verify` — raises FetchError on failure (locked policy:
+         build/add abort on any bad package; validate --full reports
+         it as an issue and moves on).
       2. `lgx manifest --json` for the full manifest (matches what
          build_index.py records).
       3. `lgx signature` for the raw manifest.sig (empty = unsigned).
@@ -221,26 +272,36 @@ def version_entry_from_lgx(
     The entry shape is byte-compatible with what build_index.py emits,
     so a diff against the GitHub-Actions index for the same packages
     differs only in `releasedAt` (Last-Modified vs the GH release time)
-    and the top-level `generatedAt`."""
+    and the top-level `generatedAt`.
+
+    Every failure path raises FetchError rather than calling die() so
+    the validate --full loop can convert per-entry failures into report
+    issues without aborting the batch (PR review fix)."""
     info(f"verifying {lgx_path.name}")
     try:
         lgx_run("verify", str(lgx_path))
     except RuntimeError as exc:
-        die(f"package failed `lgx verify` ({url}): {exc}")
+        raise FetchError(f"package failed `lgx verify` ({url}): {exc}") from exc
 
-    raw_manifest = lgx_run("manifest", str(lgx_path), "--json")
+    try:
+        raw_manifest = lgx_run("manifest", str(lgx_path), "--json")
+    except RuntimeError as exc:
+        raise FetchError(f"{url}: `lgx manifest --json` failed: {exc}") from exc
     try:
         manifest = json.loads(raw_manifest)
     except json.JSONDecodeError as exc:
-        die(f"{url}: package's manifest.json is unparseable: {exc}")
+        raise FetchError(f"{url}: package's manifest.json is unparseable: {exc}") from exc
 
-    raw_sig = lgx_run("signature", str(lgx_path))
+    try:
+        raw_sig = lgx_run("signature", str(lgx_path))
+    except RuntimeError as exc:
+        raise FetchError(f"{url}: `lgx signature` failed: {exc}") from exc
     signature: dict | None = None
     if raw_sig.strip():
         try:
             signature = json.loads(raw_sig)
         except json.JSONDecodeError as exc:
-            die(f"{url}: package's manifest.sig is unparseable: {exc}")
+            raise FetchError(f"{url}: package's manifest.sig is unparseable: {exc}") from exc
 
     data = lgx_path.read_bytes()
     sha256 = hashlib.sha256(data).hexdigest()
@@ -249,10 +310,10 @@ def version_entry_from_lgx(
     name = manifest.get("name", "")
     version = manifest.get("version", "")
     if not name or not version:
-        die(f"{url}: manifest is missing `name` or `version`")
+        raise FetchError(f"{url}: manifest is missing `name` or `version`")
     root_hash = manifest.get("hashes", {}).get("root", "")
     if not root_hash:
-        die(f"{url}: manifest has no `hashes.root`")
+        raise FetchError(f"{url}: manifest has no `hashes.root`")
 
     entry: dict = {
         "releasedAt": iso_from_http_date(last_modified) or iso_now(),
@@ -353,7 +414,12 @@ def cmd_build(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="logos-index-") as tmpdir:
         workdir = pathlib.Path(tmpdir)
         for url in urls:
-            name, entry = fetch_entry(url, workdir)
+            try:
+                name, entry = fetch_entry(url, workdir)
+            except FetchError as exc:
+                # Single-package failure aborts the build (locked
+                # policy: a bad input is not silently dropped).
+                die(str(exc))
             merge_version(index, name, entry)
 
     sort_versions(index)
@@ -380,7 +446,11 @@ def cmd_add(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="logos-index-") as tmpdir:
         workdir = pathlib.Path(tmpdir)
         for url in urls:
-            name, entry = fetch_entry(url, workdir)
+            try:
+                name, entry = fetch_entry(url, workdir)
+            except FetchError as exc:
+                # Same single-package-aborts policy as `build`.
+                die(str(exc))
             if merge_version(index, name, entry):
                 added += 1
 
@@ -584,14 +654,18 @@ def _validate_entry_against_file(
         issues.append(f"{pkg_name}: entry has no url; cannot full-validate")
         return issues
     try:
-        # Reuse the same fetch+verify+extract pipeline `add`/`build` use.
+        # Reuse the same fetch+verify+extract pipeline `add`/`build`
+        # use. Per-entry FetchError becomes an issue and the caller
+        # keeps going — so validate's contract ("report the whole
+        # batch") is honoured even when several packages are broken.
+        # Previously fetch_entry called die() and this function caught
+        # the resulting SystemExit only to re-raise it, defeating the
+        # batch contract; PR review caught the bug and the entire
+        # error path is now exception-based.
         observed_name, observed = fetch_entry(url, workdir)
-    except SystemExit:
-        # fetch_entry calls die() on a fatal extraction error; convert
-        # the would-be exit into a per-entry issue so validate reports
-        # the whole batch rather than stopping at the first mismatch.
-        raise  # but die() already called sys.exit; this branch is
-        # unreachable. Documented for clarity.
+    except FetchError as exc:
+        issues.append(f"{pkg_name}: {exc}")
+        return issues
 
     # Cross-checks — mirror verifyDownloadAgainstIndex's bindings.
     if observed_name != pkg_name:

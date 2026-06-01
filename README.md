@@ -73,7 +73,8 @@ version; clients pick it up on their next catalog refresh.
 ├── submodules/                           # one git submodule per module (you add these)
 ├── scripts/
 │   ├── add-module.sh                     # add a submodule + generate its workflow
-│   └── catalog.sh                        # run the catalog workflows via `gh` (no Actions tab)
+│   ├── catalog.sh                        # run the catalog workflows via `gh` (no Actions tab)
+│   └── index.py                          # manage index.json without GitHub (build / add / remove / list / show / validate)
 └── .github/workflows/
     ├── _release-module.yml               # signing config — the ONE place to edit it
     ├── release-module.yml.template       # per-module workflow template (don't run; it's a template)
@@ -139,6 +140,53 @@ latest 1.x of the action. For reproducible releases, pin an exact tag
 (e.g. `@v1.2.3`) instead. A bump to `@v2` signals a breaking change to
 the workflow inputs or the index schema; stay on `@v1` until you've
 read its migration notes.
+
+## Managing `index.json` without GitHub
+
+If you'd rather host `.lgx` files yourself (S3, your own server, a
+file share — anywhere `lgpd` can `GET` from), `scripts/index.py` builds
+and edits the catalog's `index.json` from a plain text list of `.lgx`
+URLs. The output is byte-compatible with what the GitHub-Actions
+`rebuild-index.yml` produces, so clients (`lgpd`, the package-manager
+UI) consume it identically.
+
+```bash
+# Full rebuild from a URL list (one .lgx URL per line; blank lines and
+# `#` comments ignored). repositoryName picks --name → ./logos-repo.json's
+# `name` → "unknown".
+./scripts/index.py build urls.txt -o index.json --name "My Catalog"
+
+# Incremental edits — modifies index.json in place:
+./scripts/index.py add    index.json https://example.com/foo-v1.2.0.lgx
+./scripts/index.py add    index.json --from-file new-urls.txt
+./scripts/index.py remove index.json foo 1.2.0    # one version
+./scripts/index.py remove index.json foo          # whole package
+
+# Inspect (no network, no `lgx`):
+./scripts/index.py list     index.json
+./scripts/index.py show     index.json foo
+./scripts/index.py validate index.json            # structural / consistency
+
+# Cross-check the index against the actual .lgx files (downloads each;
+# catches rootHash, manifest, sha256, size, or signer DID mismatches —
+# the same bindings the client enforces at install time):
+./scripts/index.py validate index.json --full
+```
+
+`build`, `add`, and `validate --full` require the `lgx` binary on `PATH`
+(every package is verified during indexing). Install with:
+
+```bash
+nix build github:logos-co/logos-package#lgx
+```
+
+`remove` / `list` / `show` / `validate` (light) are pure JSON operations
+and need no `lgx` or network.
+
+Host the resulting `index.json` anywhere, then point your
+`logos-repo.json`'s `indexUrl` at it. Clients pick it up on their next
+catalog refresh — the GitHub Actions path stays available for forks
+that prefer it.
 
 ## Notes for cloning a fork
 

@@ -140,6 +140,22 @@ latest 1.x of the action. For reproducible releases, pin an exact tag
 the workflow inputs or the index schema; stay on `@v1` until you've
 read its migration notes.
 
+## Managing `index.json` without GitHub Actions
+
+If you'd rather host `.lgx` files yourself (S3, your own server, a
+file share — anywhere `lgpd` can `GET` from) and not rely on this
+repo's GitHub-Actions index builder,
+[`logos-co/logos-modules-release-tool`](https://github.com/logos-co/logos-modules-release-tool)
+ships a single-file CLI (`index.py`) that builds, edits and validates
+an `index.json` from a plain list of `.lgx` URLs (or local files for
+packages you've just uploaded yourself). The output is byte-compatible
+with what `rebuild-index.yml` here produces, so clients consume it
+identically.
+
+The GitHub Actions path in this repo stays the default — the tool is
+for catalog maintainers who want a fully non-GitHub setup, or who want
+local control over partial / incremental index edits.
+
 ## Notes for cloning a fork
 
 `.gitmodules` is committed but submodule working trees are not — after

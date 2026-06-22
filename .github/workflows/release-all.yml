@@ -14,7 +14,12 @@ name: Release all modules
 # module's build fail without aborting the rest.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force build — replace the current published release if it has the same version."
+        type: boolean
+        default: false
 
 # Forked repos default to a read-only GITHUB_TOKEN.
 permissions:
@@ -57,4 +62,5 @@ jobs:
     uses: ./.github/workflows/_release-module.yml
     with:
       module_path: ${{ matrix.module_path }}
+      force_build: ${{ inputs.force_build }}
     secrets: inherit

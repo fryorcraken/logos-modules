@@ -11,9 +11,10 @@
 #   ./scripts/catalog.sh <command> [args] [--watch]
 #
 # Commands:
-#   release [<module>]    Trigger release-<module>.yml. With no <module>,
+#   release [<module>] [--force]
+#                         Trigger release-<module>.yml. With no <module>,
 #                         list the modules this catalog publishes.
-#   release-all           Trigger release-all.yml (re)release every module.
+#   release-all [--force] Trigger release-all.yml (re)release every module.
 #   rebuild-index         Trigger rebuild-index.yml (regenerate index.json).
 #   unpublish <module> [<version>] [--dry-run] [--keep-tags]
 #                         Trigger unpublish.yml. Removes a module from the
@@ -25,9 +26,13 @@
 #
 #   --watch  on release / release-all / rebuild-index / unpublish: follow
 #            the run that was just triggered through to completion.
+#   --force  on release / release-all: Force build — replace the current
+#            published release if it has the same version (otherwise an
+#            already-published version is skipped).
 #
 # Examples:
 #   ./scripts/catalog.sh release logos-chat-module
+#   ./scripts/catalog.sh release logos-chat-module --force
 #   ./scripts/catalog.sh release-all --watch
 #   ./scripts/catalog.sh rebuild-index
 #   ./scripts/catalog.sh unpublish logos-chat-module --dry-run
@@ -59,12 +64,14 @@ print_usage() {
 WATCH=0
 DRY_RUN=0
 KEEP_TAGS=0
+FORCE=0
 ARGS=()
 for a in "$@"; do
   case "$a" in
     --watch)      WATCH=1 ;;
     --dry-run)    DRY_RUN=1 ;;
     --keep-tags)  KEEP_TAGS=1 ;;
+    --force)      FORCE=1 ;;
     -h|--help)    print_usage; exit 0 ;;
     -*)           die "unknown flag: $a (see --help)" ;;
     *)            ARGS+=("$a") ;;
@@ -168,11 +175,19 @@ case "$CMD" in
       list_modules | sed 's/^/  /' >&2
       exit 1
     fi
-    run_workflow "$WF"
+    if [ "$FORCE" = "1" ]; then
+      run_workflow "$WF" -f "force_build=true"
+    else
+      run_workflow "$WF"
+    fi
     ;;
 
   release-all)
-    run_workflow "release-all.yml"
+    if [ "$FORCE" = "1" ]; then
+      run_workflow "release-all.yml" -f "force_build=true"
+    else
+      run_workflow "release-all.yml"
+    fi
     ;;
 
   rebuild-index)

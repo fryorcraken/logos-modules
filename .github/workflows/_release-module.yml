@@ -35,6 +35,15 @@ on:
         description: "Path to the module submodule (e.g. submodules/<repo>)."
         type: string
         required: true
+      force_build:
+        description: |
+          Force build — rebuild and REPLACE the already-published
+          `<module>-v<version>` release instead of skipping it. Maps to
+          the action's `skip_if_published` (inverted): false (default) =
+          skip a version that's already fully published; true = republish
+          the same version, overwriting its assets.
+        type: boolean
+        default: false
 
 # Forked repos default to a read-only GITHUB_TOKEN; the downstream
 # release job needs to create releases / upload assets.
@@ -46,6 +55,10 @@ jobs:
     uses: logos-co/logos-modules-release-action/.github/workflows/release.yml@v1
     with:
       module_path: ${{ inputs.module_path }}
+
+      # Normal runs skip a version that's already fully published; "Force
+      # build" (force_build: true) republishes it by disabling that skip.
+      skip_if_published: ${{ !inputs.force_build }}
 
       # ─── Signing mode (edit here, not in each caller) ────────────────
       signing_mode: none

@@ -15,7 +15,12 @@ name: Release __MODULE__
 # template (affects future modules).
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force build — replace the current published release if it has the same version."
+        type: boolean
+        default: false
 
 # Forked repos default to a read-only GITHUB_TOKEN.
 permissions:
@@ -26,4 +31,5 @@ jobs:
     uses: ./.github/workflows/_release-module.yml
     with:
       module_path: submodules/__MODULE__
+      force_build: ${{ inputs.force_build }}
     secrets: inherit

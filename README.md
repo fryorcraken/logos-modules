@@ -109,6 +109,14 @@ one place:
   submodule is a fast no-op (the action skips builds whose
   `<module>-v<version>` is already published).
 
+Both **Release \<module\>** and **Release all modules** take a **Force
+build** toggle on the *Run workflow* form (off by default). Leave it off
+for the normal skip-if-already-published behaviour; turn it on to rebuild
+and **replace** the current release when the version is unchanged — handy
+after a half-published release or a build-pipeline fix. From the terminal
+it's `./scripts/catalog.sh release <module> --force` (or `release-all
+--force`).
+
 Every workflow declares `permissions: contents: write` because a
 forked repo's default `GITHUB_TOKEN` is read-only, and the release job
 must create releases / upload assets.

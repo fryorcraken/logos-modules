@@ -16,3 +16,7 @@
 ; After cloning a fork, materialise the submodule working trees with:
 ;
 ;   git submodule update --init --recursive
+[submodule "submodules/radicle-module"]
+	path = submodules/radicle-module
+	url = https://github.com/fryorcraken/logos-radicle-module
+	branch = main

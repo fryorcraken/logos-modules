@@ -55,18 +55,20 @@ permissions:
 
 jobs:
   release:
-    # Pinned past @v1 to a specific commit on master: 974960591a8d ("release:
-    # support module_path inside a submodule", 2026-08-18) — the fix that lets
+    # Pinned to v1.3, not the moving @v1 tag. v1.3 (2026-08-18) shipped
+    # "release: support module_path inside a submodule (multi-module repos)"
+    # (logos-co/logos-modules-release-action#16) — the fix that lets
     # module_path point *inside* a submodule (submodules/<repo>/<module-dir>),
     # needed because this catalog's radicle-module submodule holds two Logos
     # modules (radicle, radicle-ui) in subdirectories, not one at its root.
-    # The released v1 tag predates this fix and fails checkout with
+    # @v1 itself still resolves to the older v1.2 commit — confirmed via the
+    # repo's tag list, `v1` and `v1.2` share a SHA that predates v1.3 — so it
+    # was never advanced after v1.3 was cut, even though semver-moving-tag
+    # convention says it should have been. Using @v1 fails checkout with
     # "pathspec '<path>' did not match any file(s) known to git" for any
-    # module_path that isn't itself a registered submodule path. Re-pin to a
-    # tagged v1.x once this fix ships in one; don't move to a moving ref
-    # (@master/@main) — pin the exact commit so a change upstream can't
-    # silently alter this catalog's release behaviour.
-    uses: logos-co/logos-modules-release-action/.github/workflows/release.yml@974960591a8dd275c84618b7c946b4db616c0cd2
+    # module_path that isn't itself a registered submodule path. Move back to
+    # @v1 once upstream re-points it past v1.3.
+    uses: logos-co/logos-modules-release-action/.github/workflows/release.yml@v1.3
     with:
       module_path: ${{ inputs.module_path }}
 

@@ -1,0 +1,39 @@
+name: Release radicle_ui (UI)
+
+# Manually-triggered release for the "radicle_ui" UI module. Delegates the
+# build / verify / sign / publish pipeline to the local
+# _release-module.yml reusable workflow so signing config lives in
+# exactly one place.
+#
+# logos-radicle-module is a monorepo holding two modules (core "radicle"
+# and UI "radicle_ui") in one git repo, so it's registered as a single
+# submodule at submodules/radicle-module with two hand-maintained release
+# workflows pointing at each module's subdirectory — see also
+# release-radicle.yml. NOT auto-discoverable by release-all.yml, which
+# assumes one module per submodule path; run both per-module workflows
+# individually instead.
+#
+# Source of truth for module name + version is
+# submodules/radicle-module/radicle-ui/metadata.json — read by the
+# upstream logos-modules-release-action. The radicle_ui module depends on
+# radicle (declared in its own metadata.json), so release radicle first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force build — replace the current published release if it has the same version."
+        type: boolean
+        default: false
+
+# Forked repos default to a read-only GITHUB_TOKEN.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/_release-module.yml
+    with:
+      module_path: submodules/radicle-module/radicle-ui
+      force_build: ${{ inputs.force_build }}
+    secrets: inherit

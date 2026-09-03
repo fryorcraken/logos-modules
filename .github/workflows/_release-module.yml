@@ -32,7 +32,10 @@ on:
   workflow_call:
     inputs:
       module_path:
-        description: "Path to the module submodule (e.g. submodules/<repo>)."
+        description: |
+          Path to the module: either a submodule root (submodules/<repo>)
+          or a subdirectory inside one, for a submodule that holds more
+          than one module (submodules/<repo>/<module-dir>).
         type: string
         required: true
       force_build:
@@ -52,7 +55,18 @@ permissions:
 
 jobs:
   release:
-    uses: logos-co/logos-modules-release-action/.github/workflows/release.yml@v1
+    # Pinned past @v1 to a specific commit on master: 974960591a8d ("release:
+    # support module_path inside a submodule", 2026-08-18) — the fix that lets
+    # module_path point *inside* a submodule (submodules/<repo>/<module-dir>),
+    # needed because this catalog's radicle-module submodule holds two Logos
+    # modules (radicle, radicle-ui) in subdirectories, not one at its root.
+    # The released v1 tag predates this fix and fails checkout with
+    # "pathspec '<path>' did not match any file(s) known to git" for any
+    # module_path that isn't itself a registered submodule path. Re-pin to a
+    # tagged v1.x once this fix ships in one; don't move to a moving ref
+    # (@master/@main) — pin the exact commit so a change upstream can't
+    # silently alter this catalog's release behaviour.
+    uses: logos-co/logos-modules-release-action/.github/workflows/release.yml@974960591a8dd275c84618b7c946b4db616c0cd2
     with:
       module_path: ${{ inputs.module_path }}
 
